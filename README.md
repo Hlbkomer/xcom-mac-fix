@@ -2,16 +2,16 @@
 
 Run the Steam Windows version of **XCOM: Enemy Within** on Apple Silicon using Wine, Rosetta 2 and Metal. The default setup needs **no CrossOver**. You need your own copy of XCOM: Enemy Unknown with the Enemy Within expansion and a Steam account.
 
-**0.5.1 is an experimental prerelease.** The working setup was tested on one M1 Max running macOS 27. The bundled graphics DLL was rebuilt from the tactically tested fix and passed its focused graphics regression; that exact rebuild still needs a fresh tactical gameplay check. Enemy Unknown without the expansion is not validated.
+**0.5.2 is an experimental prerelease.** The working setup was tested on one M1 Max running macOS 27. The bundled graphics DLL was rebuilt from the tactically tested fix and passed its focused graphics regression; that exact rebuild still needs a fresh tactical gameplay check. Enemy Unknown without the expansion is not validated.
 
 ## Download and install
 
-Download `xcom-mac-fix-0.5.1.zip` and its `.sha256` file from the [0.5.1 release](https://github.com/Hlbkomer/xcom-mac-fix/releases/tag/v0.5.1). In Terminal, from the download directory:
+Download `xcom-mac-fix-0.5.2.zip` and its `.sha256` file from the [0.5.2 release](https://github.com/Hlbkomer/xcom-mac-fix/releases/tag/v0.5.2). In Terminal, from the download directory:
 
 ```bash
-shasum -a 256 -c xcom-mac-fix-0.5.1.zip.sha256
-unzip xcom-mac-fix-0.5.1.zip
-cd xcom-mac-fix-0.5.1/installer
+shasum -a 256 -c xcom-mac-fix-0.5.2.zip.sha256
+unzip xcom-mac-fix-0.5.2.zip
+cd xcom-mac-fix-0.5.2/installer
 ./install.sh --dry-run
 ./install.sh
 ```
@@ -57,3 +57,5 @@ The archive uses an explicit public file list and includes checksums, installer 
 Thanks to Alexander Theissen (athei), Wine contributors, x87sidecar contributors and mtld3d contributors. Original game by Firaxis/2K; this is an independent community project.
 
 Installer and project documentation: [MIT](LICENSE), © 2026 Hlbkomer. Third-party components retain their own licences; see [licence notes](installer/LICENSE-NOTE.md). The modified mtld3d DLL is clearly marked as an altered zlib-licensed build.
+
+See [Security and trust boundaries](SECURITY.md) for installer hardening, runtime permissions and reporting guidance.

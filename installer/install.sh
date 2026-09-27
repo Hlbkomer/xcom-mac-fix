@@ -30,7 +30,7 @@
 set -u
 umask 022
 
-VERSION="0.5.1"
+VERSION="0.5.2"
 STEAM_APPID="200510"                     # XCOM: Enemy Unknown (includes Enemy Within)
 WINE_URL="https://github.com/athei/wine-build/releases/download/cx-26.3.0-6/wine-cx-26.3.0-6-macos-x86_64.tar.xz"
 WINE_SHA="11cb278a82ba8c2e7563c02afd7fb369702ca193b0b3ebfc8db22e771900ce37"
@@ -67,12 +67,54 @@ run() {
   if [ "$DRY" = 1 ]; then printf '  [dry-run] would run:'; printf ' %q' "$@"; printf '\n'; return 0; fi
   "$@"
 }
+# Refuse existing symlink components before writing, including dangling links.
+# This protects against planted links, not another process with the same user's privileges.
+check_write_path() {
+  local p="$1"
+  while [ "$p" != / ] && [ "$p" != . ]; do
+    [ ! -L "$p" ] || die "refusing symlink path: $p"
+    p="$(dirname "$p")"
+  done
+  [ ! -d "$1" ] || die "expected a file, found directory: $1"
+}
 write_file() {  # write_file PATH MODE < content
   local path="$1" mode="$2" tmp
+  check_write_path "$path"
   if [ "$DRY" = 1 ]; then printf '  [dry-run] would write %s (%s bytes, mode %s)\n' "$path" "$(wc -c | tr -d ' ')" "$mode"; return 0; fi
-  tmp="$path.tmp.$$"
-  cat > "$tmp" || die "cannot write $tmp"
-  if ! { chmod "$mode" "$tmp" && mv -f "$tmp" "$path"; }; then die "cannot install $path"; fi
+  tmp="$(mktemp "$(dirname "$path")/.xcom-write.XXXXXXXX")" || die "cannot create staging file"
+  if ! { cat > "$tmp" && chmod "$mode" "$tmp" && mv -f "$tmp" "$path"; }; then
+    rm -f "$tmp"
+    die "cannot install $path"
+  fi
+}
+# Resolve directory aliases through existing ancestors, including a not-yet-created leaf.
+# Reject dot segments, ambiguous separators and line breaks before any mutation.
+checked_install_dir() {
+  local p="$1" ancestor suffix="" base resolved home_real
+  case "$p" in /*) ;; *) die "install directory must be absolute";; esac
+  while [ "$p" != / ] && [ "${p%/}" != "$p" ]; do p="${p%/}"; done
+  case "/${p#/}/" in */./*|*/../*|*//*|*$'\n'*|*$'\r'*) die "ambiguous install directory: $p";; esac
+  ancestor="$p"
+  while [ ! -d "$ancestor" ]; do
+    [ ! -e "$ancestor" ] && [ ! -L "$ancestor" ] || die "invalid directory: $ancestor"
+    base="$(basename "$ancestor")"; suffix="/$base$suffix"; ancestor="$(dirname "$ancestor")"
+  done
+  resolved="$(cd "$ancestor" && pwd -P)" || die "cannot resolve directory: $p"
+  resolved="${resolved%/}$suffix"; [ -n "$resolved" ] || resolved=/
+  home_real="$(cd "$HOME" && pwd -P)" || die "cannot resolve home directory"
+  case "$resolved" in /|/Applications|/System|/Library|/Users|/Volumes|/private|/private/tmp|/usr|/bin|/sbin|/opt|"$home_real"|"$home_real/Library"|"$home_real/Library/Application Support"|"$home_real/Documents"|"$home_real/Desktop"|"$home_real/Downloads")
+    die "refusing to use $resolved as the install folder";; esac
+  # Also refuse any ancestor of the user's home.
+  case "$home_real/" in "$resolved/"*) die "install directory contains the home directory";; esac
+  printf '%s\n' "$resolved"
+}
+remove_desktop_launcher() {
+  local path="$1"
+  case "$path" in "$DESK_PLAY"|"$DESK_KILL") ;; *) warn "ignoring unexpected launcher path in manifest"; return 0;; esac
+  check_write_path "$path"
+  if [ -f "$path" ] && grep -qF -e "$MARKER" -e "$OLD_MARKER" "$path"; then
+    info "$path"; run rm -f "$path"
+  elif [ -e "$path" ]; then warn "not removing $path (no generated marker)"; fi
 }
 ask_yes() { # ask_yes "question" -> 0 if yes
   [ "$YES" = 1 ] && return 1
@@ -85,9 +127,10 @@ sha256() { shasum -a 256 "$1" | awk '{print $1}'; }
 # fetch URL FILE [SHA]: download (resumable, retried) and verify
 fetch() {
   local url="$1" out="$2" want="${3:-}"
+  check_write_path "$out"
   if [ "$DRY" = 1 ]; then info "[dry-run] would download $url$([ -n "$want" ] && printf ' (sha256 %s…)' "${want:0:12}")"; return 0; fi
   if [ -n "$want" ] && [ -f "$out" ] && [ "$(sha256 "$out")" = "$want" ]; then info "already downloaded: $(basename "$out")"; return 0; fi
-  curl -fL --retry 3 --connect-timeout 20 -C - -o "$out" "$url" || { rm -f "$out"; curl -fL --retry 3 --connect-timeout 20 -o "$out" "$url"; } \
+  curl --proto '=https' --proto-redir '=https' -fL --retry 3 --connect-timeout 20 -C - -o "$out" "$url" || { rm -f "$out"; curl --proto '=https' --proto-redir '=https' -fL --retry 3 --connect-timeout 20 -o "$out" "$url"; } \
     || die "download failed: $url"
   if [ -n "$want" ]; then
     [ "$(sha256 "$out")" = "$want" ] || { rm -f "$out"; die "sha256 mismatch for $(basename "$out") (expected $want); deleted it"; }

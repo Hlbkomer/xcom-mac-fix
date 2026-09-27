@@ -16,7 +16,7 @@ class GraphicsInstall(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='xcom test ')
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.install = self.root / 'install with spaces'
         self.m3 = self.install / 'wine/lib/wine/d3d9/mtld3d'
         (self.m3 / 'i386-windows').mkdir(parents=True)
@@ -78,6 +78,104 @@ install_mtld3d_fix
         self.assertNotEqual(self.run_fix().returncode, 0)
         self.assertTrue(self.dst.is_symlink())
         self.assertEqual(outside.read_bytes(), b'unrelated')
+
+    def test_old_staging_symlink_cannot_overwrite_other_file(self):
+        outside = self.root / 'unrelated'
+        outside.write_bytes(b'sentinel')
+        self.dst.with_name(self.dst.name + '.xcom-tmp').symlink_to(outside)
+        result = self.run_fix()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(outside.read_bytes(), b'sentinel')
+        self.assertFalse(self.dst.is_symlink())
+        self.assertEqual(self.dst.read_bytes(), PAYLOAD.read_bytes())
+
+    def test_correct_hash_symlink_is_still_rejected(self):
+        self.dst.symlink_to(PAYLOAD)
+        self.assertNotEqual(self.run_fix().returncode, 0)
+        self.assertTrue(self.dst.is_symlink())
+
+    def test_symlink_parent_is_rejected(self):
+        directory = self.dst.parent
+        moved = directory.with_name('outside')
+        directory.rename(moved)
+        directory.symlink_to(moved, target_is_directory=True)
+        self.assertNotEqual(self.run_fix().returncode, 0)
+        self.assertEqual(list(moved.iterdir()), [])
+
+    def test_license_symlink_is_not_followed(self):
+        outside = self.root / 'unrelated'
+        outside.write_bytes(b'sentinel')
+        (self.m3 / 'LICENSE.xcom-fix').symlink_to(outside)
+        self.assertNotEqual(self.run_fix().returncode, 0)
+        self.assertEqual(outside.read_bytes(), b'sentinel')
+
+
+class PathSafety(unittest.TestCase):
+    def helper(self, code, **variables):
+        helpers = (ROOT / 'installer/install.sh').read_text().split('# ---------- args ----------')[0]
+        return subprocess.run(['bash', '-c', helpers + '\n' + code],
+                              env={**os.environ, **variables}, capture_output=True, text=True)
+
+    def test_protected_paths_and_aliases_are_rejected(self):
+        home = Path.home()
+        for path in ['/', str(home), str(home / 'Documents'),
+                     str(home / 'Documents') + '///',
+                     str(home / 'Library') + '/../Documents',
+                     str(home / 'Documents') + '/.', str(home / 'Library/Application Support')]:
+            with self.subTest(path=path):
+                self.assertNotEqual(self.helper('checked_install_dir "$TARGET"', TARGET=path).returncode, 0)
+
+    def test_symlink_alias_to_protected_directory_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            alias = Path(directory).resolve() / 'home-alias'
+            alias.symlink_to(Path.home(), target_is_directory=True)
+            self.assertNotEqual(self.helper('checked_install_dir "$TARGET"', TARGET=str(alias)).returncode, 0)
+
+    def test_new_install_directory_resolves_without_creation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory).resolve() / 'new install' / 'nested'
+            result = self.helper('checked_install_dir "$TARGET"', TARGET=str(target))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), str(target))
+            self.assertFalse(target.exists())
+
+    def test_manifest_cannot_delete_arbitrary_marked_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory).resolve() / 'unrelated'
+            target.write_text('# xcom-mac-fix: generated file\n')
+            result = self.helper('DESK_PLAY="$TARGET.play"; DESK_KILL="$TARGET.stop"; remove_desktop_launcher "$TARGET"', TARGET=str(target))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(target.exists())
+
+    def test_write_file_refuses_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            outside = root / 'outside'; outside.write_text('sentinel')
+            target = root / 'target'; target.symlink_to(outside)
+            result = self.helper('printf replacement | write_file "$TARGET" 644', TARGET=str(target))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(outside.read_text(), 'sentinel')
+
+    def test_uninstall_requires_matching_manifest_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / 'install.manifest').write_text('mode=free\ndir=/unrelated\n')
+            sentinel = root / 'keep'; sentinel.write_text('sentinel')
+            result = subprocess.run(['bash', str(ROOT / 'installer/install.sh'), '--uninstall', '--yes', '--dir', str(root)], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('manifest directory does not match', result.stderr)
+            self.assertTrue(sentinel.exists())
+
+    def test_normal_uninstall_removes_only_fixture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory).resolve()
+            root = parent / 'installation'; root.mkdir()
+            (root / 'install.manifest').write_text(f'mode=free\ndir={root}\n')
+            outside = parent / 'keep'; outside.write_text('sentinel')
+            result = subprocess.run(['bash', str(ROOT / 'installer/install.sh'), '--uninstall', '--yes', '--dir', str(root)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(root.exists())
+            self.assertEqual(outside.read_text(), 'sentinel')
 
 
 class PackageChecks(unittest.TestCase):

@@ -1,4 +1,26 @@
-# XCOM Mac Fix 0.5.1 — release candidate
+# XCOM Mac Fix 0.5.2 — security hardening prerelease
+
+Use this release instead of 0.5.1. The game runtime and graphics DLL are unchanged.
+
+- Replace predictable DLL/script staging names with securely created temporary files.
+- Refuse symlink destinations and parent components for these writes, backups,
+  manifests and downloads, including a DLL symlink with an otherwise valid checksum.
+- Resolve install directories before use; reject ambiguous and protected paths.
+  Free-mode uninstall requires a matching directory in its manifest.
+- Restrict manifest-based launcher deletion to the two expected launchers.
+- Restrict downloads and redirects to HTTPS; pin the CI checkout action commit
+  and disable persistence of checkout credentials.
+- Document debugging entitlements, quarantine handling and upstream trust limits
+  in SECURITY.md. Eighteen offline regression tests pass locally.
+
+These changes address local filesystem and accidental deletion risks. They do not
+make Wine a sandbox or claim to protect against another process running with the
+same account's privileges. Install into a dedicated directory you control. An old
+installation using an alias path may need its manifest reviewed before uninstall;
+the installer refuses a mismatched manifest rather than guessing.
+
+## Existing runtime changes and validation limits
+
 
 This release packages the graphics fix used by the working XCOM: Enemy Within
 setup on an M1 Max. Metal remains the default; `--renderer=gl` selects OpenGL.

@@ -1,10 +1,9 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2154  # helpers and option variables come from install.sh
 # FREE mode of xcom-mac-fix (the default). Sourced by install.sh; not run directly.
-DIR="${DIR%/}"
-case "$DIR" in /*) ;; *) die "--dir must be an absolute path";; esac
-case "$DIR" in "$HOME"|/|/Applications|"$HOME/Library"|"$HOME/Documents"|"$HOME/Desktop") die "refusing to use $DIR as the install folder";; esac
+DIR="$(checked_install_dir "$DIR")" || exit 1
 MANIFEST="$DIR/install.manifest"
+check_write_path "$MANIFEST"
 DESK_PLAY="$HOME/Desktop/XCOM Enemy Within (free Wine).command"
 DESK_KILL="$HOME/Desktop/XCOM (free Wine) - stop.command"
 FW_WS_PAT="$(esc_re "$DIR/wine/").*wineserver"
@@ -21,7 +20,9 @@ say "  install folder: $DIR"
 # ---------- uninstall ----------
 if [ "$MODE" = uninstall ]; then
   [ -d "$DIR" ] || { say "Nothing installed at $DIR."; exit 0; }
+  [ ! -L "$MANIFEST" ] || die "refusing symlink manifest"
   grep -qx 'mode=free' "$MANIFEST" 2>/dev/null || die "$DIR has no free-mode install.manifest; not removing it automatically."
+  grep -qxF "dir=$DIR" "$MANIFEST" || die "manifest directory does not match; refusing removal"
   if pgrep -f "$FW_WS_PAT" >/dev/null 2>&1; then
     say "Stopping XCOM and its Steam first..."
     if [ -x "$DIR/stop.sh" ]; then run env NOWAIT=1 "$DIR/stop.sh"; else check_fail "Steam from $DIR is running; quit it first"; fi
@@ -34,8 +35,7 @@ if [ "$MODE" = uninstall ]; then
   fi
   while IFS='=' read -r k v; do
     case "$k" in
-      desktop) if [ -f "$v" ] && grep -qF -e "$MARKER" -e "$OLD_MARKER" "$v"; then info "$v"; run rm -f "$v"
-               elif [ -e "$v" ]; then warn "not removing $v (it was changed, no marker)"; fi;;
+      desktop) remove_desktop_launcher "$v";;
       ini_backup) [ -n "$v" ] && say "  Note: XComEngine.ini is left as it is. Your pre-install copy: $v";;
     esac
   done < "$MANIFEST"

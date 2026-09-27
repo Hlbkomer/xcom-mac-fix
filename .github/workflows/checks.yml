@@ -6,7 +6,9 @@ jobs:
   offline-checks:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Installer regressions
         run: python3 -m unittest discover -s tests -v
       - name: Build public archive

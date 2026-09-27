@@ -1,6 +1,17 @@
 # Release candidate validation — 27 September 2026
 
-## Completed
+## 0.5.2 security patch
+
+- Eighteen offline tests pass, including the reproduced staging-symlink attack,
+  symlink destination/parent/licence refusal, protected path aliases, manifest
+  mismatch, constrained launcher deletion and a real uninstall of a disposable
+  fixture that preserves its sibling file.
+- Patched free-mode installer dry run on the existing Mac: zero failed checks;
+  no installation or game launch performed.
+- Runtime binaries are unchanged. Earlier runtime dry-run and graphics evidence
+  below belongs to 0.5.1; it is not a new gameplay validation of 0.5.2.
+
+## Prior 0.5.1 validation
 
 - Seven offline regression tests pass: fresh renderer install, idempotent rerun,
   repair despite a stale stamp, byte-preserving dry run, corrupt-payload refusal,

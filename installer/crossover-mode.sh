@@ -8,11 +8,12 @@ PIN_COMMIT="4048fcf436876f26c799ba2fa340ec73f4cca95e"      # = x87sidecar v1.7.0
 VERIFIED_CX_VERSIONS="26.0"              # CrossOver short versions this was tested on
 # sha256 of lib/wine/i386-windows/ntdll.dll: "<stock sha> <patched sha> <label>"
 KNOWN_NTDLL="b8e3de7bf9820239a0f9f7bb1b0623fa8b3df1b2efe4ce530905c96c0e85ae3b e0026730cae9aa9cfb20b20531a81875b08eba54d6bedb22adf6d0700ab3c59a CrossOver-26.0.0.39794"
-PREFIX="$HOME/Library/Application Support/xcom-x87-fix"
+PREFIX="$(checked_install_dir "$HOME/Library/Application Support/xcom-x87-fix")" || exit 1
 DESK_PLAY="$HOME/Desktop/XCOM Enemy Within (CrossOver fix).command"
 DESK_KILL="$HOME/Desktop/XCOM (CrossOver fix) - stop.command"
 case "$BOTTLE" in ""|*/*|.|..) die "invalid bottle name: '$BOTTLE'";; esac
 MANIFEST="$PREFIX/install.manifest"
+check_write_path "$MANIFEST"
 CXROOT="$PREFIX/cxroot"
 WS_PAT="$(esc_re "$CXROOT/").*wineserver"
 CX_WS_PAT='CrossOver\.app/Contents/SharedSupport/CrossOver/.*wineserver'
@@ -22,6 +23,7 @@ say "xcom-mac-fix $VERSION — CrossOver mode: $MODE$([ "$DRY" = 1 ] && echo ' (
 # ---------- uninstall ----------
 if [ "$MODE" = uninstall ]; then
   [ -d "$PREFIX" ] || { say "Nothing installed at $PREFIX."; exit 0; }
+  [ ! -L "$MANIFEST" ] || die "refusing symlink manifest"
   [ -f "$MANIFEST" ] || die "$PREFIX exists but has no install.manifest; not removing it automatically. Inspect and delete it by hand if it is yours."
   if pgrep -f "$WS_PAT" >/dev/null 2>&1; then
     check_fail "Steam/XCOM is still running from the fixed copy. Quit Steam (Steam menu > Exit) first."
@@ -29,9 +31,7 @@ if [ "$MODE" = uninstall ]; then
   say "Removing:"
   while IFS='=' read -r k v; do
     case "$k" in
-      desktop)
-        if [ -f "$v" ] && grep -qF -e "$MARKER" -e "$OLD_MARKER" "$v"; then info "$v"; run rm -f "$v"
-        elif [ -e "$v" ]; then warn "not removing $v (it was changed, no marker)"; fi;;
+      desktop) remove_desktop_launcher "$v";;
       ini_backup) [ -n "$v" ] && say "  Note: XComEngine.ini is left as it is. Your pre-install copy: $v";;
     esac
   done < "$MANIFEST"
