@@ -1,0 +1,100 @@
+xcom-mac-fix 0.5.1 — free mode: install (DRY RUN: nothing will be changed)
+  install folder: ~/Library/Application Support/xcom-mac-fix
+
+[1/9] System checks
+  - macOS 27.0
+  - Apple Silicon: yes (Apple M1 Max)
+  - Rosetta 2: installed
+  - free space: 36 GB on /System/Volumes/Data
+
+[2/9] Other Steam, launchers, game source
+  - no other Wine Steam running
+  - will replace XCOM Enemy Within (free Wine).command (made by this tool)
+  - will replace XCOM (free Wine) - stop.command (made by this tool)
+  - game: copy-on-write clone of ~/Library/Application Support/CrossOver/Bottles/Steam/drive_c/Program Files (x86)/Steam/steamapps/common/XCom-Enemy-Unknown (read only; the original is never changed)
+  - download sources reachable (Wine build, Wine Mono, x87sidecar, mtld3d, Steam)
+
+[3/9] Wine (athei/wine-build cx-26.3.0-6: CrossOver 26.3 sources + NX fix + x87 hook, LGPL)
+  [dry-run] would run: mkdir -p ~/Library/Application\ Support/xcom-mac-fix/dl ~/Library/Application\ Support/xcom-mac-fix/bin ~/Library/Application\ Support/xcom-mac-fix/logs
+  - [dry-run] would download https://github.com/athei/wine-build/releases/download/cx-26.3.0-6/wine-cx-26.3.0-6-macos-x86_64.tar.xz (sha256 11cb278a82ba…)
+  [dry-run] would run: rm -rf ~/Library/Application\ Support/xcom-mac-fix/wine-extract
+  [dry-run] would run: mkdir -p ~/Library/Application\ Support/xcom-mac-fix/wine-extract
+  [dry-run] would run: tar -xJf ~/Library/Application\ Support/xcom-mac-fix/dl/wine.tar.xz -C ~/Library/Application\ Support/xcom-mac-fix/wine-extract
+  - [dry-run] would move the unpacked tree to ~/Library/Application Support/xcom-mac-fix/wine
+
+[4/9] Wine Mono 10.4.1 (for the XCOM launcher, a .NET program)
+  - [dry-run] would download https://github.com/wine-mono/wine-mono/releases/download/wine-mono-10.4.1/wine-mono-10.4.1-x86.tar.xz (sha256 a16606ef0724…)
+  [dry-run] would run: mkdir -p ~/Library/Application\ Support/xcom-mac-fix/wine/share/wine/mono
+  [dry-run] would run: tar -xJf ~/Library/Application\ Support/xcom-mac-fix/dl/wine-mono.tar.xz -C ~/Library/Application\ Support/xcom-mac-fix/wine/share/wine/mono
+  [dry-run] would run: rm -f ~/Library/Application\ Support/xcom-mac-fix/dl/wine-mono.tar.xz
+
+[5/9] x87sidecar v1.7.0 (athei, MIT), mtld3d v0.11.0 (athei, zlib) and the launch scripts
+  - [dry-run] would download https://github.com/athei/x87sidecar/releases/download/v1.7.0/x87sidecar.tar.xz (sha256 b768336e0ad5…)
+  [dry-run] would run: tar -xJf ~/Library/Application\ Support/xcom-mac-fix/dl/x87sidecar.tar.xz -C ~/Library/Application\ Support/xcom-mac-fix/bin x87sidecar
+  [dry-run] would run: chmod 755 ~/Library/Application\ Support/xcom-mac-fix/bin/x87sidecar
+  [dry-run] would run: rm -f ~/Library/Application\ Support/xcom-mac-fix/dl/x87sidecar.tar.xz
+  - [dry-run] would run: x87sidecar --probe (must print 'supported')
+  - [dry-run] would download https://github.com/athei/mtld3d/releases/download/v0.11.0/mtld3d.tar.xz (sha256 c4535f3b4c62…)
+  [dry-run] would run: rm -rf ~/Library/Application\ Support/xcom-mac-fix/dl/mtld3d-extract
+  [dry-run] would run: mkdir -p ~/Library/Application\ Support/xcom-mac-fix/dl/mtld3d-extract
+  [dry-run] would run: tar -xJf ~/Library/Application\ Support/xcom-mac-fix/dl/mtld3d.tar.xz -C ~/Library/Application\ Support/xcom-mac-fix/dl/mtld3d-extract
+  [dry-run] would run: rm -rf ~/Library/Application\ Support/xcom-mac-fix/wine/lib/wine/d3d9/mtld3d
+  [dry-run] would run: mkdir -p ~/Library/Application\ Support/xcom-mac-fix/wine/lib/wine/d3d9/mtld3d
+  [dry-run] would run: cp -R -p ~/Library/Application\ Support/xcom-mac-fix/dl/mtld3d-extract/wine/i386-windows ~/Library/Application\ Support/xcom-mac-fix/wine/lib/wine/d3d9/mtld3d/
+  [dry-run] would run: cp -R -p ~/Library/Application\ Support/xcom-mac-fix/dl/mtld3d-extract/wine/x86_64-windows ~/Library/Application\ Support/xcom-mac-fix/wine/lib/wine/d3d9/mtld3d/
+  [dry-run] would run: cp -R -p ~/Library/Application\ Support/xcom-mac-fix/dl/mtld3d-extract/wine/x86_64-unix ~/Library/Application\ Support/xcom-mac-fix/wine/lib/wine/d3d9/mtld3d/
+  [dry-run] would run: cp -p ~/Library/Application\ Support/xcom-mac-fix/dl/mtld3d-extract/LICENSE ~/Library/Application\ Support/xcom-mac-fix/wine/lib/wine/d3d9/mtld3d/LICENSE
+  [dry-run] would run: rm -rf ~/Library/Application\ Support/xcom-mac-fix/dl/mtld3d-extract ~/Library/Application\ Support/xcom-mac-fix/dl/mtld3d.tar.xz
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/vendor/mtld3d/d3d9.dll ~/Library/Application\ Support/xcom-mac-fix/wine/lib/wine/d3d9/mtld3d/i386-windows/d3d9.dll.xcom-tmp
+  [dry-run] would run: mv -f ~/Library/Application\ Support/xcom-mac-fix/wine/lib/wine/d3d9/mtld3d/i386-windows/d3d9.dll.xcom-tmp ~/Library/Application\ Support/xcom-mac-fix/wine/lib/wine/d3d9/mtld3d/i386-windows/d3d9.dll
+  - XCOM short-stride fix installed
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/vendor/mtld3d/LICENSE ~/Library/Application\ Support/xcom-mac-fix/wine/lib/wine/d3d9/mtld3d/LICENSE.xcom-fix
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/freewine/env.sh ~/Library/Application\ Support/xcom-mac-fix/env.sh
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/freewine/play.sh ~/Library/Application\ Support/xcom-mac-fix/play.sh
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/freewine/stop.sh ~/Library/Application\ Support/xcom-mac-fix/stop.sh
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/freewine/steam.sh ~/Library/Application\ Support/xcom-mac-fix/steam.sh
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/freewine/validate.sh ~/Library/Application\ Support/xcom-mac-fix/validate.sh
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/freewine/kill-xcom.sh ~/Library/Application\ Support/xcom-mac-fix/kill-xcom.sh
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/freewine/fps-summary.sh ~/Library/Application\ Support/xcom-mac-fix/fps-summary.sh
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/freewine/compare-fps.sh ~/Library/Application\ Support/xcom-mac-fix/compare-fps.sh
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/freewine/mtlhud-fps.sh ~/Library/Application\ Support/xcom-mac-fix/mtlhud-fps.sh
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/freewine/bin/x87filter ~/Library/Application\ Support/xcom-mac-fix/bin/x87filter
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/freewine/bin/xclick.exe ~/Library/Application\ Support/xcom-mac-fix/bin/xclick.exe
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/freewine/bin/fpsbar ~/Library/Application\ Support/xcom-mac-fix/bin/fpsbar
+  [dry-run] would run: chmod 755 ~/Library/Application\ Support/xcom-mac-fix/play.sh ~/Library/Application\ Support/xcom-mac-fix/stop.sh ~/Library/Application\ Support/xcom-mac-fix/steam.sh ~/Library/Application\ Support/xcom-mac-fix/validate.sh ~/Library/Application\ Support/xcom-mac-fix/kill-xcom.sh ~/Library/Application\ Support/xcom-mac-fix/fps-summary.sh ~/Library/Application\ Support/xcom-mac-fix/compare-fps.sh ~/Library/Application\ Support/xcom-mac-fix/mtlhud-fps.sh ~/Library/Application\ Support/xcom-mac-fix/bin/x87filter ~/Library/Application\ Support/xcom-mac-fix/bin/fpsbar
+  [dry-run] would run: xattr -d com.apple.quarantine ~/Library/Application\ Support/xcom-mac-fix/bin/fpsbar
+
+[6/9] Wine prefix and Steam
+  - creating the prefix (Windows 10, 64-bit; about a minute)
+  - [dry-run] would run: wineboot -i  (WINEPREFIX=~/Library/Application Support/xcom-mac-fix/prefix, WINEDLLOVERRIDES=mshtml=d;winemenubuilder.exe=d)
+  [dry-run] would run: wineserver -w
+  - [dry-run] would run: wine reg add HKCU\Software\Wine\WineDbg /v ShowCrashDialog /t REG_DWORD /d 0
+  - Wine crash dialog disabled in this prefix (Steam.exe's harmless exit crash would otherwise show one)
+  Licence note: SteamSetup.exe is installed silently (/S), which skips its licence page. Installing Steam means
+  you accept Valve's Steam Subscriber Agreement (https://store.steampowered.com/subscriber_agreement/). XCOM's own
+  licence agreement is shown by Steam at the first game start. Wine and Wine Mono are free software (LGPL and others).
+  - [dry-run] would download https://cdn.cloudflare.steamstatic.com/client/installer/SteamSetup.exe
+  - installing Steam silently
+  - [dry-run] would run: wine SteamSetup.exe /S  (in ~/Library/Application Support/xcom-mac-fix/prefix)
+  [dry-run] would run: wineserver -w
+  [dry-run] would run: rm -f ~/Library/Application\ Support/xcom-mac-fix/dl/SteamSetup.exe
+
+[7/9] Steam login (you)
+  - [dry-run] would start Steam and wait until you have logged in (Steam Guard if asked, tick 'Remember me')
+
+[8/9] The game
+  - closing Steam for the copy
+  [dry-run] would run: mkdir -p ~/Library/Application\ Support/xcom-mac-fix/prefix/drive_c/Program\ Files\ \(x86\)/Steam/steamapps/common
+  - APFS clone (copy-on-write, uses almost no space): ~/Library/Application Support/CrossOver/Bottles/Steam/drive_c/Program Files (x86)/Steam/steamapps/common/XCom-Enemy-Unknown
+  [dry-run] would run: cp -c -R -p ~/Library/Application\ Support/CrossOver/Bottles/Steam/drive_c/Program\ Files\ \(x86\)/Steam/steamapps/common/XCom-Enemy-Unknown ~/Library/Application\ Support/xcom-mac-fix/prefix/drive_c/Program\ Files\ \(x86\)/Steam/steamapps/common/
+  [dry-run] would run: cp -p ~/Library/Application\ Support/CrossOver/Bottles/Steam/drive_c/Program\ Files\ \(x86\)/Steam/steamapps/appmanifest_200510.acf ~/Library/Application\ Support/xcom-mac-fix/prefix/drive_c/Program\ Files\ \(x86\)/Steam/steamapps/
+  - one-time 'Verify integrity of game files' (the copied copy-protected .exe files are rejected until Steam re-fetches them)
+  [dry-run] would run: ~/Library/Application\ Support/xcom-mac-fix/validate.sh
+
+[9/9] Launchers and game settings
+  [dry-run] would write ~/Desktop/XCOM Enemy Within (free Wine).command (176 bytes, mode 755)
+  [dry-run] would write ~/Desktop/XCOM (free Wine) - stop.command (176 bytes, mode 755)
+  - XComEngine.ini: AmbientOcclusion=True
+  - Ambient Occlusion is on (keep it on); nothing to change
+
+DRY RUN complete: nothing was changed. Checks failed: 0.

@@ -1,0 +1,12 @@
+.DS_Store
+__pycache__/
+*.pyc
+release/*.zip
+release/*.sha256
+xcom-mac-fix.zip
+installer/freewine/logs/
+experiments/
+publication/
+logs/
+Saves/
+Screenshots/

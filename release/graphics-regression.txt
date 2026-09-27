@@ -1,0 +1,43 @@
+compatdb: wineboot.exe [x86_64]
+compatdb:   no rule matched
+compatdb:   dxgi = gptk (from <isolated-test>/lib/wine/dxgi/gptk)
+compatdb:   d3d9 = mtld3d (from <isolated-test>/lib/wine/d3d9/mtld3d)
+compatdb: services.exe [x86_64]
+compatdb:   no rule matched
+compatdb:   dxgi = gptk (from <isolated-test>/lib/wine/dxgi/gptk)
+compatdb:   d3d9 = mtld3d (from <isolated-test>/lib/wine/d3d9/mtld3d)
+compatdb: winedevice.exe [x86_64]
+compatdb:   no rule matched
+compatdb:   dxgi = gptk (from <isolated-test>/lib/wine/dxgi/gptk)
+compatdb:   d3d9 = mtld3d (from <isolated-test>/lib/wine/d3d9/mtld3d)
+compatdb: plugplay.exe [x86_64]
+compatdb:   no rule matched
+compatdb:   dxgi = gptk (from <isolated-test>/lib/wine/dxgi/gptk)
+compatdb:   d3d9 = mtld3d (from <isolated-test>/lib/wine/d3d9/mtld3d)
+compatdb: svchost.exe [x86_64]
+compatdb:   no rule matched
+compatdb:   dxgi = gptk (from <isolated-test>/lib/wine/dxgi/gptk)
+compatdb:   d3d9 = mtld3d (from <isolated-test>/lib/wine/d3d9/mtld3d)
+compatdb: winedevice.exe [x86_64]
+compatdb:   no rule matched
+compatdb:   dxgi = gptk (from <isolated-test>/lib/wine/dxgi/gptk)
+compatdb:   d3d9 = mtld3d (from <isolated-test>/lib/wine/d3d9/mtld3d)
+compatdb: e2e.exe [i386]
+compatdb:   no rule matched
+compatdb:   dxgi = dxmt (from <isolated-test>/lib/wine/dxgi/dxmt)
+compatdb:   d3d9 = mtld3d (from <isolated-test>/lib/wine/d3d9/mtld3d)
+
+running 1 test
+[e2e] running streams::stride_below_a_consumed_attribute_still_places_the_triangle
+compatdb: explorer.exe [x86_64] company="Microsoft Corporation" product="Wine" original_filename="explorer.exe"
+compatdb:   no rule matched
+compatdb:   dxgi = gptk (from <isolated-test>/lib/wine/dxgi/gptk)
+compatdb:   d3d9 = mtld3d (from <isolated-test>/lib/wine/d3d9/mtld3d)
+compatdb: rpcss.exe [x86_64]
+compatdb:   no rule matched
+compatdb:   dxgi = gptk (from <isolated-test>/lib/wine/dxgi/gptk)
+compatdb:   d3d9 = mtld3d (from <isolated-test>/lib/wine/d3d9/mtld3d)
+test streams::stride_below_a_consumed_attribute_still_places_the_triangle ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 859 filtered out; finished in 2.11s
+

@@ -1,0 +1,22 @@
+#!/bin/bash
+# ROSETTA_X87_PATH target for the free-Wine XCOM fix. For every new 32-bit Windows process the Wine build execs
+#   x87filter --cooperative <wine loader> <args...>
+# Only XComEW.exe is handed to x87sidecar (and gets the FPS trace / debug channels); every other process
+# (Steam, its helpers, the XCOM launcher) is exec'd directly. Without the sidecar the build's cooperative
+# handshake is a no-op (it needs X87_SIDECAR_BOOTSTRAP naming the process), so skipping it is safe.
+shopt -s nocasematch
+if [[ "$*" == *xcomew.exe* ]]; then
+  [ -n "${XCOM_GAME_WINEDEBUG:-}" ] && export WINEDEBUG="$XCOM_GAME_WINEDEBUG"
+  # FPS counter/log: wined3d prints "@ approx NN.NNfps" about every 1.5 s on the fps channel (bin/fpsbar reads it)
+  [ "${XCOM_FPS:-0}" = 1 ] && export WINEDEBUG="${WINEDEBUG:+$WINEDEBUG,}+fps"
+  # Metal renderer (mtld3d, play.sh --renderer=mtld3d): Wine's +fps trace is wined3d-only, so Apple's Metal HUD
+  # logs a frame counter about once a second instead ("metal-HUD:" lines in the macOS log; mtlhud-fps.sh turns
+  # them into fps). The HUD overlay itself is hidden (opacity 0, the fps box already shows fps);
+  # XCOM_MTLHUD_OPACITY=1 shows it. mtld3d keeps its own small log in the game folder (mtld3d-logs/).
+  if [ "${XCOM_MTLHUD:-0}" = 1 ]; then
+    export MTL_HUD_ENABLED=1 MTL_HUD_LOG_ENABLED=1 MTL_HUD_OPACITY="${XCOM_MTLHUD_OPACITY:-0}"
+  fi
+  if [ "${XCOM_X87:-1}" = 1 ]; then exec "$(dirname "$0")/x87sidecar" "$@"; fi
+fi
+shift   # drop --cooperative
+exec "$@"

@@ -1,0 +1,15 @@
+name: Release checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  offline-checks:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Installer regressions
+        run: python3 -m unittest discover -s tests -v
+      - name: Build public archive
+        run: python3 tools/package-release.py
+      - name: Verify archive
+        run: python3 tools/verify-release.py

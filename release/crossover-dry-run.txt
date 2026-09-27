@@ -1,0 +1,59 @@
+xcom-mac-fix 0.5.1 — CrossOver mode: install (DRY RUN: nothing will be changed)
+
+[1/8] System checks
+  - macOS 27.0
+  - Apple Silicon: yes (Apple M1 Max)
+  - Rosetta 2: installed
+
+[2/8] CrossOver
+  - CrossOver 26.0 (26.0.0.39794) at /Applications/CrossOver.app
+  - version verified
+  - CrossOver's Wine: not running
+
+[3/8] Bottle 'Steam' and XCOM
+  - bottle arch: win64
+  - Steam: C:\Program Files (x86)\Steam\steam.exe
+  - XCOM: Enemy Within found: ~/Library/Application Support/CrossOver/Bottles/Steam/dosdevices/c:/Program Files (x86)/Steam/steamapps/common/XCom-Enemy-Unknown/XEW/Binaries/Win32/XComEW.exe
+
+[4/8] Build tools and NX patch site
+  - cmake 4.2.3
+  - ntdll.dll sha256 known: CrossOver-26.0.0.39794
+  - NX decision site: exactly 1 match, jne at file offset 0x4113f
+
+[5/8] Existing install
+  - install location: ~/Library/Application Support/xcom-x87-fix (free)
+
+[6/8] Clone CrossOver's Wine and patch it
+  [dry-run] would run: mkdir -p ~/Library/Application\ Support/xcom-x87-fix/bin ~/Library/Application\ Support/xcom-x87-fix/src ~/Library/Application\ Support/xcom-x87-fix/logs
+  - [dry-run] would write ~/Library/Application Support/xcom-x87-fix/install.manifest
+  - APFS clone (copy-on-write; uses almost no extra space): /Applications/CrossOver.app/Contents/SharedSupport/CrossOver -> ~/Library/Application Support/xcom-x87-fix/cxroot
+  [dry-run] would run: cp -c -R -p /Applications/CrossOver.app/Contents/SharedSupport/CrossOver ~/Library/Application\ Support/xcom-x87-fix/cxroot
+  [dry-run] would run: cp -p ~/Library/Application\ Support/xcom-x87-fix/cxroot/lib/wine/i386-windows/ntdll.dll ~/Library/Application\ Support/xcom-x87-fix/cxroot/lib/wine/i386-windows/ntdll.dll.orig
+  - patch 1 byte at 0x4113f: 75 (jne) -> EB (jmp) = no-exec stays on for the whole process
+
+[7/8] Build athei/x87sidecar @ 4048fcf436876f26c799ba2fa340ec73f4cca95e
+  [dry-run] would run: git clone --quiet https://github.com/athei/x87sidecar.git ~/Library/Application\ Support/xcom-x87-fix/src/x87sidecar
+  [dry-run] would run: git -C ~/Library/Application\ Support/xcom-x87-fix/src/x87sidecar -c advice.detachedHead=false checkout --quiet 4048fcf436876f26c799ba2fa340ec73f4cca95e
+  [dry-run] would run: cmake -S ~/Library/Application\ Support/xcom-x87-fix/src/x87sidecar -B ~/Library/Application\ Support/xcom-x87-fix/src/x87sidecar/build -DCMAKE_BUILD_TYPE=Release
+  [dry-run] would run: cmake --build ~/Library/Application\ Support/xcom-x87-fix/src/x87sidecar/build --target x87sidecar -j 10
+  [dry-run] would run: cp -p ~/Library/Application\ Support/xcom-x87-fix/src/x87sidecar/build/bin/x87sidecar_entitled ~/Library/Application\ Support/xcom-x87-fix/bin/x87sidecar_entitled
+  - [dry-run] would run: x87sidecar_entitled --probe (must print 'supported')
+
+[8/8] Wrapper loader, launchers, game config
+  - keep CrossOver's loader as ~/Library/Application Support/xcom-x87-fix/cxroot/lib/wine/x86_64-unix/wine.x87real, re-sign it ad-hoc with its own entitlements + get-task-allow (needed for the sidecar to attach)
+  [dry-run] would run: mv ~/Library/Application\ Support/xcom-x87-fix/cxroot/lib/wine/x86_64-unix/wine ~/Library/Application\ Support/xcom-x87-fix/cxroot/lib/wine/x86_64-unix/wine.x87real
+  - [dry-run] would extract the loader's entitlements to ~/Library/Application Support/xcom-x87-fix/src/loader-entitlements.plist and add com.apple.security.get-task-allow
+  [dry-run] would run: codesign --force --sign - --options runtime --entitlements ~/Library/Application\ Support/xcom-x87-fix/src/loader-entitlements.plist ~/Library/Application\ Support/xcom-x87-fix/cxroot/lib/wine/x86_64-unix/wine.x87real
+  [dry-run] would write ~/Library/Application Support/xcom-x87-fix/cxroot/lib/wine/x86_64-unix/wine (1103 bytes, mode 755)
+  [dry-run] would write ~/Library/Application Support/xcom-x87-fix/bin/xcom-play.sh (5940 bytes, mode 755)
+  [dry-run] would write ~/Library/Application Support/xcom-x87-fix/bin/xcom-kill.sh (1462 bytes, mode 755)
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/freewine/bin/fpsbar ~/Library/Application\ Support/xcom-x87-fix/bin/fpsbar
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/freewine/bin/xclick.exe ~/Library/Application\ Support/xcom-x87-fix/bin/xclick.exe
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/freewine/fps-summary.sh ~/Library/Application\ Support/xcom-x87-fix/bin/fps-summary.sh
+  [dry-run] would run: cp -p ~/Documents/XCOM\ Mac\ Fix/installer/freewine/compare-fps.sh ~/Library/Application\ Support/xcom-x87-fix/bin/compare-fps.sh
+  [dry-run] would run: chmod 755 ~/Library/Application\ Support/xcom-x87-fix/bin/fpsbar ~/Library/Application\ Support/xcom-x87-fix/bin/fps-summary.sh ~/Library/Application\ Support/xcom-x87-fix/bin/compare-fps.sh
+  [dry-run] would run: xattr -d com.apple.quarantine ~/Library/Application\ Support/xcom-x87-fix/bin/fpsbar
+  - XComEngine.ini: AmbientOcclusion=True
+  - [dry-run] would ask whether to back up XComEngine.ini and set AmbientOcclusion=True
+
+DRY RUN complete: nothing was changed. Checks failed: 0.

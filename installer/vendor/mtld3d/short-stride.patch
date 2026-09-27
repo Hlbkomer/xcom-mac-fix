@@ -1,0 +1,425 @@
+diff --git a/windows/core/src/streams.rs b/windows/core/src/streams.rs
+index 9393970..657f856 100644
+--- a/windows/core/src/streams.rs
++++ b/windows/core/src/streams.rs
+@@ -149,9 +149,10 @@ pub const fn instanced_stream_read_bytes(
+ /// vertex struct carries fields past them). A zero stride returns the extent:
+ /// the inline (UP) path has no other span, and [`bound_stream_layout`] pairs it
+ /// with a `Constant` step. A non-zero stride smaller than the consumed extent
+-/// means the shader reads an attribute past the end of each vertex, which
+-/// Metal rejects as a pipeline, so the layout is widened to the extent with a
+-/// warning; the affected draw fetches wrong data either way.
++/// is not a legal Metal layout: an attribute would extend past the step. The
++/// layout is widened to the extent, and the draw copies each vertex out to
++/// that step with [`expand_short_stride`] so the fetch still addresses
++/// `base + index * app_stride + attribute_offset`.
+ #[must_use]
+ pub fn layout_stride(app_stride: u32, extent: u32) -> u32 {
+     if app_stride == 0 {
+@@ -166,6 +167,46 @@ pub fn layout_stride(app_stride: u32, extent: u32) -> u32 {
+     app_stride
+ }
+ 
++/// Copy a short-stride vertex buffer out to the widened layout step.
++///
++/// Vertex `i` is addressed at `i * stride`. An attribute whose declaration
++/// extends past that stride still reads `base + i * stride + offset`, which
++/// crosses into the next vertex. Metal rejects that descriptor, and
++/// [`layout_stride`] therefore steps by `extent`. Slot `i` of the returned
++/// buffer holds the `extent` bytes at source offset `i * stride`, zero where
++/// the source ends first, so the widened step fetches those bytes.
++///
++/// `stride` must be non-zero and less than `extent`. Otherwise there is
++/// nothing to widen and the function returns an empty buffer. An empty
++/// source, or a product of vertex count and `extent` that overflows, does
++/// the same.
++#[must_use]
++pub fn expand_short_stride(src: &[u8], stride: u32, extent: u32) -> Vec<u8> {
++    let Some(stride_us) = usize::try_from(stride).ok().filter(|s| *s > 0) else {
++        return Vec::new();
++    };
++    let Some(extent_us) = usize::try_from(extent).ok().filter(|e| *e > stride_us) else {
++        return Vec::new();
++    };
++    if src.is_empty() {
++        return Vec::new();
++    }
++    let verts = src.len() / stride_us;
++    let Some(bytes) = verts.checked_mul(extent_us) else {
++        mtld3d_shared::log_once_warn!(target: crate::LOG_TARGET,
++            "short-stride expand overflowed: {verts} vertices x {extent} bytes"
++        );
++        return Vec::new();
++    };
++    let mut dst = vec![0_u8; bytes];
++    for i in 0..verts {
++        let src_off = i * stride_us;
++        let n = extent_us.min(src.len() - src_off);
++        dst[i * extent_us..i * extent_us + n].copy_from_slice(&src[src_off..src_off + n]);
++    }
++    dst
++}
++
+ /// The vertex buffer layout of a stream with a vertex buffer bound.
+ ///
+ /// `app_stride` and `freq` are the stream's `SetStreamSource` stride and
+diff --git a/windows/core/src/streams/tests.rs b/windows/core/src/streams/tests.rs
+index 9de2581..d5fe356 100644
+--- a/windows/core/src/streams/tests.rs
++++ b/windows/core/src/streams/tests.rs
+@@ -144,3 +144,20 @@ fn layout_stride_widens_below_the_consumed_extent() {
+     // Zero is the declaration extent for the inline (UP) path.
+     assert_eq!(layout_stride(0, 28), 28);
+ }
++
++#[test]
++fn expand_short_stride_overlaps_the_next_vertex() {
++    use super::expand_short_stride;
++
++    // Three 4-byte vertices. An attribute that ends at byte 6 of each vertex
++    // reads two bytes into the next one; the last vertex has none left.
++    let src = [0_u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
++    assert_eq!(
++        expand_short_stride(&src, 4, 6),
++        vec![0, 1, 2, 3, 4, 5, 4, 5, 6, 7, 8, 9, 8, 9, 10, 11, 0, 0]
++    );
++    // Nothing to widen, or no source: the caller keeps the original bytes.
++    assert!(expand_short_stride(&src, 4, 4).is_empty());
++    assert!(expand_short_stride(&src, 0, 6).is_empty());
++    assert!(expand_short_stride(&[], 4, 6).is_empty());
++}
+diff --git a/windows/d3d9/src/draw.rs b/windows/d3d9/src/draw.rs
+index 10ded64..0352989 100644
+--- a/windows/d3d9/src/draw.rs
++++ b/windows/d3d9/src/draw.rs
+@@ -28,8 +28,8 @@ use mtld3d_core::{
+     scratch::ScratchArena,
+     shader_cache,
+     streams::{
+-        bound_stream_layout, instance_count, instanced_stream_read_bytes, is_instance_data,
+-        layout_stride,
++        bound_stream_layout, expand_short_stride, instance_count, instanced_stream_read_bytes,
++        is_instance_data, layout_stride,
+     },
+     vs_draw::{MAX_CLIP_PLANES, VS_DRAW_BYTES, VsDrawState},
+ };
+@@ -183,6 +183,84 @@ impl VertexSource {
+ /// 16-element declaration can produce.
+ static NULL_STREAM_ZEROS: [u8; 4096] = [0; 4096];
+ 
++/// Vertex bytes widened to `layout_stride_bytes` when `stride` is shorter.
++///
++/// `None` when the stream already covers the layout, so the caller binds the
++/// original bytes. `Some` of an empty buffer means the copy could not be
++/// built; the caller drops the draw rather than fetching at the widened step
++/// from the packed source.
++fn widened_vertices(src: &[u8], stride: u32, layout_stride_bytes: u32) -> Option<Vec<u8>> {
++    if stride == 0 || layout_stride_bytes <= stride {
++        return None;
++    }
++    Some(expand_short_stride(src, stride, layout_stride_bytes))
++}
++
++/// CPU bytes of one bound stream, from its offset through the backing.
++///
++/// The slice starts at the `SetStreamSource` offset. `None` when the
++/// snapshot has no backing, or the offset is past its end.
++fn bound_stream_bytes(binding: &StreamBinding) -> Option<&[u8]> {
++    let offset = usize::try_from(binding.offset).ok()?;
++    if binding.backing_ptr == 0 || binding.backing_len <= offset {
++        return None;
++    }
++    let len = binding.backing_len - offset;
++    // SAFETY: `backing_ptr` is the stream's page box, stamped with this
++    // frame's submit seq at the draw snapshot, so the allocation outlives
++    // encoding. `offset` is the `SetStreamSource` offset and `len` is the
++    // bytes of that allocation after it.
++    Some(unsafe { core::slice::from_raw_parts((binding.backing_ptr + offset) as *const u8, len) })
++}
++
++/// Prefix of `src` that holds every vertex a per-vertex draw can address.
++///
++/// Indexed draws keep the whole tail: the highest index is not known here.
++/// A per-instance stream is not addressed by these vertex indices, so the
++/// caller does not use this cut for one.
++fn per_vertex_prefix<'a>(src: &'a [u8], stride: u32, index_source: &IndexSource) -> &'a [u8] {
++    let verts = match index_source {
++        IndexSource::None {
++            start_vertex,
++            vertex_count,
++        } => start_vertex.saturating_add(*vertex_count),
++        IndexSource::Fan {
++            start_vertex,
++            primitive_count,
++        } => start_vertex.saturating_add(primitive_count.saturating_add(2)),
++        IndexSource::Generated { max_vertex, .. } => max_vertex.saturating_add(1),
++        // The highest index is not known without scanning the index bytes.
++        IndexSource::Bound { .. } | IndexSource::Up { .. } => return src,
++    };
++    let Some(stride_us) = usize::try_from(stride).ok().filter(|step| *step > 0) else {
++        return src;
++    };
++    let Some(bytes) = usize::try_from(verts)
++        .ok()
++        .and_then(|count| count.checked_mul(stride_us))
++    else {
++        return src;
++    };
++    &src[..bytes.min(src.len())]
++}
++
++/// Bind `bytes` as stream `slot` and forget any buffer previously cached there.
++///
++/// Inline bytes replace the Metal binding the dedup cache still names, so the
++/// next draw of the original buffer must emit its own `setVertexBuffer`.
++fn bind_widened_vertices(enc: &mut FrameEncoder, bytes: &[u8], slot: u32) -> bool {
++    let Ok(size) = u32::try_from(bytes.len()) else {
++        mtld3d_shared::log_once_warn!(target: crate::LOG_TARGET,
++            "short-stride vertex copy does not fit a binding; draw dropped"
++        );
++        return false;
++    };
++    let scratch_ptr = enc.alloc_scratch(bytes);
++    enc.emit_command(Command::set_vertex_bytes(scratch_ptr, size, slot));
++    enc.last_bound().invalidate_vertex_buffer_slot(slot);
++    true
++}
++
+ /// The vertex buffer layouts of a draw, one per stream the declaration reads.
+ ///
+ /// Unread streams stay [`StreamLayout::UNUSED`] so the pipeline key is
+@@ -2227,16 +2305,33 @@ pub fn emit_draw(enc: &mut FrameEncoder, draw: DrawOp) {
+     //    and churns only when the game renames.
+     let t_vbib = CycleAddTimer::start(enc.op_sub_detail_ptr(OpSubDetail::BVbib));
+     match &vertex_source {
+-        VertexSource::Up { bytes, size, .. } => {
+-            let scratch_ptr = enc.alloc_scratch(bytes);
+-            if usize::try_from(*size).is_ok_and(|size| size > SET_BYTES_MAX) {
+-                enc.bump_up_vertex_oversized();
++        VertexSource::Up {
++            bytes,
++            size,
++            stride,
++        } => {
++            let logical = usize::try_from(*size)
++                .unwrap_or(bytes.len())
++                .min(bytes.len());
++            let src = &bytes[..logical];
++            if let Some(expanded) = widened_vertices(src, *stride, layouts[0].stride) {
++                if expanded.is_empty() || !bind_widened_vertices(enc, &expanded, 0) {
++                    mtld3d_shared::log_once_warn!(target: crate::LOG_TARGET,
++                        "draw dropped: short-stride UP vertices could not be widened"
++                    );
++                    return;
++                }
++            } else {
++                let scratch_ptr = enc.alloc_scratch(bytes);
++                if usize::try_from(*size).is_ok_and(|size| size > SET_BYTES_MAX) {
++                    enc.bump_up_vertex_oversized();
++                }
++                enc.emit_command(Command::set_vertex_bytes(scratch_ptr, *size, 0));
++                // Inline slot-0 bind clobbers the real Metal vertex-buffer
++                // binding; drop the cached bound-VB so the next bound draw
++                // re-emits its `setVertexBuffer` instead of reading these bytes.
++                enc.last_bound().invalidate_vertex_buffer();
+             }
+-            enc.emit_command(Command::set_vertex_bytes(scratch_ptr, *size, 0));
+-            // Inline slot-0 bind clobbers the real Metal vertex-buffer
+-            // binding; drop the cached bound-VB so the next bound draw
+-            // re-emits its `setVertexBuffer` instead of reading these bytes.
+-            enc.last_bound().invalidate_vertex_buffer();
+         }
+         VertexSource::Bound { .. } => {
+             for b in vertex_source.bindings() {
+@@ -2247,6 +2342,32 @@ pub fn emit_draw(enc: &mut FrameEncoder, draw: DrawOp) {
+                     // attributes: nothing to bind.
+                     continue;
+                 }
++                if layout.stride > b.stride && b.stride > 0 {
++                    let Some(src) = bound_stream_bytes(b) else {
++                        mtld3d_shared::log_once_warn!(target: crate::LOG_TARGET,
++                            "draw dropped: short-stride stream {slot} has no CPU backing to widen"
++                        );
++                        return;
++                    };
++                    let src = if layout.step == VertexStepFunction::PerVertex {
++                        per_vertex_prefix(src, b.stride, &index_source)
++                    } else {
++                        src
++                    };
++                    let Some(expanded) = widened_vertices(src, b.stride, layout.stride) else {
++                        mtld3d_shared::log_once_warn!(target: crate::LOG_TARGET,
++                            "draw dropped: short-stride stream {slot} could not be widened"
++                        );
++                        return;
++                    };
++                    if expanded.is_empty() || !bind_widened_vertices(enc, &expanded, slot) {
++                        mtld3d_shared::log_once_warn!(target: crate::LOG_TARGET,
++                            "draw dropped: short-stride stream {slot} could not be widened"
++                        );
++                        return;
++                    }
++                    continue;
++                }
+                 let (buffer_handle, staged) = enc.ensure_vbib_mtl_buffer(
+                     b.buffer_id,
+                     b.backing_ptr as u64,
+diff --git a/windows/tests/COVERAGE.md b/windows/tests/COVERAGE.md
+index b2735f3..ddc3286 100644
+--- a/windows/tests/COVERAGE.md
++++ b/windows/tests/COVERAGE.md
+@@ -76,7 +76,7 @@ test file lands with its row in the same change.
+ | `a2b10g10r10.rs` | An A2B10G10R10 texture created on a default device with no configuration key, its level description reporting the format. Every A2R10G10B10 scenario of `packed10.rs` run with red in the low ten bits and blue in the third ten: per-lane sampling of asymmetric red and blue under the four alpha codes, the amplified low two bits of each lane at the bottom, middle and top of the range, native lock words and a pitch of twelve bytes in four pools with explicit mips, partial locks, `UpdateSurface` and `UpdateTexture` for 2D, cube and volume, same-format `StretchRect` followed by a READONLY lock, the query and creation matrix with `D3DOK_NOAUTOGEN`, linear filtering and wrapping, `ColorFill` whole and partial with its nearest codes in this lane order, the `GetDC` rejections with the out pointer untouched, and rejected copies to and from A2R10G10B10, A8R8G8B8, A8B8G8R8, G16R16 and R32F with the destination words unchanged. One word written to an A2B10G10R10 and an A2R10G10B10 texture samples with red and blue exchanged under each alpha code, and the A2R10G10B10 word with its outer lanes exchanged samples the A2B10G10R10 colour. |
+ | `packed10.rs` | No test of its own: the scenario bodies `a2r10g10b10.rs` and `a2b10g10r10.rs` run once per format, with the word packing, the expected pixel and the sampling helpers taking the format's lane order. |
+ | `buffers.rs` | `CreateVertexBuffer`/`CreateIndexBuffer`; `DrawPrimitive`/`DrawIndexedPrimitive` from bound streams; DYNAMIC+DISCARD refill; `GetDesc` round-trips; `GetStreamSource`/`GetIndices` round-trips including higher streams and the NULL-bind offset/stride retention; under `buffer.ignoreLockBounds=true`, a `Staged` (DEFAULT, non-DYNAMIC) vertex buffer and index buffer each carrying the writes a title makes past the `[OffsetToLock, SizeToLock)` window it announced, checked by re-locking a window whose announced bytes do not change and reading back the pixel the rest of the write moves; the CPU-backing release a `D3DPOOL_DEFAULT` `D3DUSAGE_WRITEONLY` non-`DYNAMIC` vertex buffer takes after an upload has carried every byte, checked by refilling half of a two-triangle buffer through an announced sub-range and through a zero-`SizeToLock` tail and reading back the half neither `Lock` named, and by a `Reset` after a release still leaving buffer draws working. Same-frame overlapping staged refills retain an earlier draw and an untouched second triangle for an exact 16 KiB allocation, a partial upload, and a logical whole-buffer upload with a padded tail. |
+-| `streams.rs` | A two-stream declaration through a programmable VS; a zero `SetStreamSource` stride feeding every vertex the element at the stream offset; the `SetStreamSourceFreq` contract (defaults, rejections leaving state untouched, flag round-trip); instanced indexed draws (count from stream 0, per-instance step rate, non-indexed draws never instance, no per-instance stream means one instance); recorded and `D3DSBT_ALL` state blocks restoring stream bindings and frequencies. |
++| `streams.rs` | A two-stream declaration through a programmable VS; a zero `SetStreamSource` stride feeding every vertex the element at the stream offset; a stride shorter than a consumed attribute (position and colour packed in 16 bytes, a declared texcoord extending to 24) still placing the triangle from a bound buffer and from `DrawPrimitiveUP`; the `SetStreamSourceFreq` contract (defaults, rejections leaving state untouched, flag round-trip); instanced indexed draws (count from stream 0, per-instance step rate, non-indexed draws never instance, no per-instance stream means one instance); recorded and `D3DSBT_ALL` state blocks restoring stream bindings and frequencies. |
+ | `range_fog.rs` | Linear, exponential and squared-exponential range fog; in-scene toggles and vertex/all stateblocks; world/view transforms and sequential/indexed vertex blending; disabled fog, table fog, RHW supplied factors and programmable vertex fog unaffected by range state. |
+ | `table_fog.rs` | Z/W LINEAR, EXP and EXP2 on fixed-function, RHW and SM1/SM2 paths; SM3 automatic fog suppression, same-scene shader transitions and snapshot/recorded stateblocks; range/table selection, output alpha and alpha testing, viewport and raw depth-bias semantics, and nonlinear per-pixel interpolation. |
+ | `render_states.rs` | Alpha + additive blend; the default `D3DRS_BLENDFACTOR` opaque white as the source factor on a pass's first draw blending at full weight, not with a fresh encoder's zero blend colour; `D3DRS_BLENDFACTOR` set back to the default opaque white by a second draw in the same pass blending that draw at full weight, not at the first draw's half-weight factor; a draw after another render target was bound and the back buffer bound again with nothing drawn in between filling solid and blending at full weight, not at the wireframe fill and half-weight factor of the draw before the detour; `D3DRS_DEPTHBIAS` as an absolute depth offset (a quad one gap behind a stored depth loses under a bias of three quarters of the gap and wins under one and a half, at stored depths of 0.75, 0.375, 0.1875 and 0.047, which a bias scaled by the depth's exponent fails at every one), and never clipping geometry (a quad on the far plane under a positive bias and one on the near plane under a negative bias are both drawn); an additive pass selected by `D3DCMP_EQUAL` against a depth-priming pass of the same geometry still reaching the target; COLORWRITEENABLE mask; scissor; cull-mode winding; defaults vs `render_state_defaults()`; set/get round-trip; stencil round-trip; stencil test gating a draw; stencil clear preserving depth; combined depth+stencil mid-frame clear resetting both planes; stencil reference compared through the mask; stencil clear and test against a depth-only surface; wireframe triangle interiors remain clear; a Clear after a draw in the same pass (clear quad) surviving the draw's cull mode; every enum-valued render state set to a DWORD outside its enum space still round-tripping through `GetRenderState` and drawing the frame the spec defaults draw; `D3DRS_SRGBWRITEENABLE` encoding an opaque draw's linear 0x80 to 0xBC in a render-target texture, and blending in linear before that encode (half-alpha white over a stored 0x80 lands on 0xCD, not the 0xC0 a gamma-space blend gives) on a render-target texture, on the back buffer, and on a `CreateRenderTarget` surface; a device released immediately after presenting sRGB-write frames, six rounds under the default configuration and six under the forced Intel storage answers, each device drawing two frames with `D3DRS_SRGBWRITEENABLE` set and released with no readback and no wait between the last `Present` and the `Release`, so the back buffer's sRGB twin leaves behind the encoder's GPU-idle wait rather than ahead of the frame flush (a premature release of it is a retain on freed memory that an Apple GPU hides, so the round pins the teardown running clean, not the absence of the fault); a stencil stamp drawn before a mid-frame `GetRenderTargetData` still gating a fullscreen `EQUAL` draw after it in the same frame, so the continuation loads the stencil plane the first submission stored instead of discarding it as never written; a pass on another render target that keeps the depth surface bound and draws with the depth test on but `D3DCMP_ALWAYS` and no depth write, between a scene storing depth 0.25 on the left half and 0.75 on the right and a back-buffer pass testing a quad at 0.5 with `LESS`, carrying the scene's depth through so the quad loses on the left and wins on the right. |
+diff --git a/windows/tests/tests/e2e/streams.rs b/windows/tests/tests/e2e/streams.rs
+index 51fcfaa..6a3268b 100644
+--- a/windows/tests/tests/e2e/streams.rs
++++ b/windows/tests/tests/e2e/streams.rs
+@@ -7,16 +7,41 @@
+ 
+ use mtld3d_tests::{Harness, PosVertex};
+ use mtld3d_types::{
+-    D3D_OK, D3DDECL_END_STREAM, D3DDECLTYPE_D3DCOLOR, D3DDECLTYPE_FLOAT3, D3DDECLTYPE_UNUSED,
+-    D3DDECLUSAGE_COLOR, D3DDECLUSAGE_POSITION, D3DDECLUSAGE_TEXCOORD, D3DERR_INVALIDCALL,
+-    D3DFMT_INDEX16, D3DPOOL_DEFAULT, D3DPT_TRIANGLELIST, D3DSBT_ALL, D3DSTREAMSOURCE_INDEXEDDATA,
+-    D3DSTREAMSOURCE_INSTANCEDATA, D3DUSAGE_WRITEONLY, D3DVERTEXELEMENT9,
++    D3D_OK, D3DDECL_END_STREAM, D3DDECLTYPE_D3DCOLOR, D3DDECLTYPE_FLOAT2, D3DDECLTYPE_FLOAT3,
++    D3DDECLTYPE_UNUSED, D3DDECLUSAGE_COLOR, D3DDECLUSAGE_POSITION, D3DDECLUSAGE_TEXCOORD,
++    D3DERR_INVALIDCALL, D3DFMT_INDEX16, D3DPOOL_DEFAULT, D3DPT_TRIANGLELIST, D3DSBT_ALL,
++    D3DSTREAMSOURCE_INDEXEDDATA, D3DSTREAMSOURCE_INSTANCEDATA, D3DUSAGE_DYNAMIC,
++    D3DUSAGE_WRITEONLY, D3DVERTEXELEMENT9,
+ };
+ 
+ const RED: u32 = 0xFFFF_0000;
+ const GREEN: u32 = 0xFF00_FF00;
+ const BLUE: u32 = 0xFF00_00FF;
+ 
++/// `vs_2_0`: `dcl_position v0; dcl_color v1; dcl_texcoord v2; mov oPos, v0; mov oD0, v1;`
++///
++/// The texcoord is declared and unread. It still consumes a declaration
++/// element, which is what stretches a layout past a packed stream.
++const VS_POS_COLOR_TEXCOORD: [u32; 17] = [
++    0xFFFE_0200,
++    (31) | (2 << 24),
++    0x0000_0000,
++    (1 << 28) | (0xF << 16),
++    (31) | (2 << 24),
++    u32::from_ne_bytes([D3DDECLUSAGE_COLOR, 0, 0, 0]),
++    (1 << 28) | (0xF << 16) | 1,
++    (31) | (2 << 24),
++    u32::from_ne_bytes([D3DDECLUSAGE_TEXCOORD, 0, 0, 0]),
++    (1 << 28) | (0xF << 16) | 2,
++    (1) | (2 << 24),
++    (4 << 28) | (0xF << 16),
++    (1 << 28) | (0xE4 << 16),
++    (1) | (2 << 24),
++    (5 << 28) | (0xF << 16),
++    (1 << 28) | (0xE4 << 16) | 1,
++    0x0000_FFFF,
++];
++
+ /// `vs_2_0`: `dcl_position v0; dcl_color v1; mov oPos, v0; mov oD0, v1;`
+ const VS_POS_COLOR: [u32; 14] = [
+     0xFFFE_0200,
+@@ -258,6 +283,95 @@ fn stride_below_an_unconsumed_decl_tail_still_fetches_vertices() {
+     );
+ }
+ 
++/// A stride shorter than a consumed attribute still places every vertex.
++///
++/// Position and colour are packed at 16 bytes. The shader also declares a
++/// texcoord whose element ends at byte 24, so the layout has to step by 24
++/// while the stream steps by 16. Stepping the packed buffer by 24 reads
++/// every vertex past the first from the wrong offset and the triangle misses
++/// the centre. The same mesh through `DrawPrimitiveUP` takes the same path.
++#[test]
++fn stride_below_a_consumed_attribute_still_places_the_triangle() {
++    #[repr(C)]
++    #[derive(Clone, Copy)]
++    struct PackedVertex {
++        x: f32,
++        y: f32,
++        z: f32,
++        color: u32,
++    }
++
++    let elements = [
++        element(0, D3DDECLTYPE_FLOAT3, D3DDECLUSAGE_POSITION),
++        D3DVERTEXELEMENT9 {
++            stream: 0,
++            offset: 12,
++            type_: D3DDECLTYPE_D3DCOLOR,
++            method: 0,
++            usage: D3DDECLUSAGE_COLOR,
++            usage_index: 0,
++        },
++        D3DVERTEXELEMENT9 {
++            stream: 0,
++            offset: 16,
++            type_: D3DDECLTYPE_FLOAT2,
++            method: 0,
++            usage: D3DDECLUSAGE_TEXCOORD,
++            usage_index: 0,
++        },
++        end(),
++    ];
++
++    let h = Harness::new();
++    let decl = h.create_vertex_declaration(&elements);
++    let vs = h.create_vertex_shader(&VS_POS_COLOR_TEXCOORD);
++    let ps = h.create_pixel_shader(&PS_DIFFUSE);
++    assert_eq!(h.set_vertex_declaration(&decl), 0, "SetVertexDeclaration");
++    assert_eq!(h.set_vertex_shader(&vs), 0, "SetVertexShader");
++    assert_eq!(h.set_pixel_shader(&ps), 0, "SetPixelShader");
++
++    let packed: Vec<PackedVertex> = centered_triangle()
++        .iter()
++        .map(|p| PackedVertex {
++            x: p.x,
++            y: p.y,
++            z: p.z,
++            color: GREEN,
++        })
++        .collect();
++    let stride = stride_of::<PackedVertex>();
++    let vb = h.create_vertex_buffer(
++        stride * 3,
++        D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC,
++        0,
++        D3DPOOL_DEFAULT,
++    );
++    vb.lock(0, 0, 0).write(packed.as_slice());
++    assert_eq!(h.set_stream_source(0, &vb, 0, stride), D3D_OK);
++
++    h.render_once(BLUE, |d| {
++        assert_eq!(d.draw_primitive(D3DPT_TRIANGLELIST, 0, 1), 0, "bound draw");
++    });
++    assert_eq!(
++        h.read_pixel(320, 280),
++        GREEN,
++        "bound vertices keep their positions when a consumed attribute hangs past the stride"
++    );
++
++    h.render_once(BLUE, |d| {
++        assert_eq!(
++            d.draw_primitive_up(D3DPT_TRIANGLELIST, 1, packed.as_slice()),
++            0,
++            "UP draw"
++        );
++    });
++    assert_eq!(
++        h.read_pixel(320, 280),
++        GREEN,
++        "inline vertices keep their positions when a consumed attribute hangs past the stride"
++    );
++}
++
+ /// A zero stride feeds every vertex the element at the stream offset.
+ ///
+ /// D3D9 defines a `SetStreamSource` stride of 0 as one element for the whole
